@@ -1,39 +1,54 @@
 #!/bin/bash
 
-AMI_ID="ami-0055977a6e828a4f4"
-INSTANCE_TYPE="t3.micro"
-SECURITY_GROUP_ID="sg-0a89d548ef86c3b6b"
-HOSTED_ZONE_ID="Z047542739NDVFK4NND1"
+ami_id="ami-0055977a6e828a4f4"
+instance_type="t3.micro"
+domain_name="sodhichebutha.online"
+hosted_zone_id="Z047542739NDVFK4NND1"
 
-COMPONENT=$1
+for instance in $@
+do
+    echo "Creating instance: $instance"
 
-INSTANCE_ID=$(aws ec2 run-instances \
-    --image-id $AMI_ID \
-    --instance-type $INSTANCE_TYPE \
-    --security-group-ids $SECURITY_GROUP_ID \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$COMPONENT}]" \
-    --query 'Instances[0].InstanceId' \
-    --output text)
+    instance_id=$(aws ec2 run-instances \
+            --image-id $ami_id \
+            --instance-type $instance_type \
+            --security-groups "roboshop-common" "roboshop-$instance" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=roboshop-$instance}]" \
+            --query 'Instances[0].InstanceId' \
+            --output text
+    )
 
-echo "Instance Created: $INSTANCE_ID"
+    echo "$instance instance ID: $instance_id"
 
-PRIVATE_IP=$(aws ec2 describe-instances \
-    --instance-ids $INSTANCE_ID \
-    --query 'Reservations[0].Instances[0].PrivateIpAddress' \
-    --output text)
+    if [ $instance != "frontend" ]; then
+        IP=$( aws ec2 describe-instances --instance-ids $instance_id \
+             --query 'Reservations[].Instances[].PrivateIpAddress' --output text
+        )
+        r53_record="${instance}.${domain_name}"
+    else
+        IP=$( aws ec2 describe-instances --instance-ids $instance_id \
+             --query 'Reservations[].Instances[].PublicIpAddress' --output text
+        )
+        r53_record="${domain_name}"
+    fi
 
-aws route53 change-resource-record-sets \
-    --hosted-zone-id $HOSTED_ZONE_ID \
-    --change-batch "{
-      \"Changes\": [{
-        \"Action\": \"UPSERT\",
-        \"ResourceRecordSet\": {
-          \"Name\": \"$COMPONENT.sodhichebutha.online\",
-          \"Type\": \"A\",
-          \"TTL\": 1,
-          \"ResourceRecords\": [{\"Value\": \"$PRIVATE_IP\"}]
-        }
-      }]
-    }"
+    # update R53 record
+    echo "Record: ${r53_record}"
+    aws route53 change-resource-record-sets \
+    --hosted-zone-id $hosted_zone_id \
+    --change-batch '{
+        "Changes": [
+            {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                    "Name": "'$r53_record'",
+                    "Type": "A",
+                    "TTL": 1,
+                    "ResourceRecords": [{"Value": "'$IP'"}]
+                }
+            }
+        ]
+    }'
 
-echo "DNS Record Created: $COMPONENT.sodhichebutha.online -> $PRIVATE_IP"
+    echo "Updated R53 record for $instance"
+done
