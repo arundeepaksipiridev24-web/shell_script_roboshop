@@ -1,25 +1,50 @@
 #!/bin/bash
 
-echo "Configuring MongoDB..."
+LOGFILE="/tmp/mongodb.log"
 
-# Copy repo file
-cp mongo.repo /etc/yum.repos.d/mongo.repo
+R="\e[31m"
+G="\e[32m"
+Y="\e[33m"
+N="\e[0m"
 
-# Install MongoDB
-dnf install mongodb-org -y
+check_status() {
+  if [ $1 -eq 0 ]; then
+    echo -e "$2 ... ${G}SUCCESS${N}"
+  else
+    echo -e "$2 ... ${R}FAILURE${N}"
+    echo "Check Logs: $LOGFILE"
+    exit 1
+  fi
+}
 
-# Enable and start service
-systemctl enable mongod
-systemctl start mongod
+USER_ID=$(id -u)
 
-# Allow remote connections
-sed -i 's/127.0.0.1/0.0.0.0/' /etc/mongod.conf
+if [ $USER_ID -ne 0 ]; then
+  echo -e "${R}Please run this script as root user${N}"
+  exit 1
+fi
 
-# Restart MongoDB
-systemctl restart mongod
+echo -e "${Y}Configuring MongoDB...${N}"
 
-# Verify
-systemctl is-active mongod
-ss -lntp | grep 27017
+cp mongo.repo /etc/yum.repos.d/mongo.repo &>>$LOGFILE
+check_status $? "Copying MongoDB Repo"
 
-echo "MongoDB configuration completed"
+dnf install mongodb-org -y &>>$LOGFILE
+check_status $? "Installing MongoDB"
+
+systemctl enable mongod &>>$LOGFILE
+check_status $? "Enabling MongoDB"
+
+systemctl start mongod &>>$LOGFILE
+check_status $? "Starting MongoDB"
+
+sed -i 's/127.0.0.1/0.0.0.0/' /etc/mongod.conf &>>$LOGFILE
+check_status $? "Configuring MongoDB Listen Address"
+
+systemctl restart mongod &>>$LOGFILE
+check_status $? "Restarting MongoDB"
+
+systemctl is-active mongod &>>$LOGFILE
+check_status $? "MongoDB Service Status"
+
+echo -e "${G}MongoDB Configuration Completed Successfully${N}"
