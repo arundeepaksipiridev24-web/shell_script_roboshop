@@ -2,7 +2,7 @@
 
 APP_NAME=catalogue
 DOMAIN_NAME=sodhichebutha.online
-MONGODB_HOST="mongodb-${DOMAIN_NAME}"
+MONGODB_HOST="mongodb.${DOMAIN_NAME}"
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
