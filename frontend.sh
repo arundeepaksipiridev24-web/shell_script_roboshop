@@ -60,7 +60,7 @@ unzip -o /tmp/frontend.zip &>>$logs_file
 
 validate $? "Extracting Frontend"
 
-cp roboshop.conf /etc/nginx/default.d/roboshop.conf &>>$logs_file
+cp /root/shell_script_roboshop/roboshop.conf /etc/nginx/default.d/roboshop.conf &>>$logs_file
 
 validate $? "Copying Nginx Config"
 
