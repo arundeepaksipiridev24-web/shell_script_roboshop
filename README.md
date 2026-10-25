@@ -14,35 +14,28 @@ sudo bash shipping.sh
 Logs are written to `/var/log/roboshop`. `DOMAIN_NAME` and `LOG_DIR` can be
 overridden through environment variables.
 
-## Archive logs older than 14 days
+## Daily log cleanup
 
-Install ZIP on the Linux host:
-
-```bash
-sudo dnf install -y zip
-```
-
-Archive the logs:
+Create the archive directory once:
 
 ```bash
-sudo bash archive-logs.sh
+sudo mkdir -p /var/log/roboshop-archives
 ```
 
-The script finds `.log` files older than 14 days in `/var/log/roboshop`, creates
-a ZIP in `/var/log/roboshop-archives`, and removes the log only when ZIP creation
-succeeds.
-
-Custom paths and retention (including catalogue's older log location):
+Run cleanup manually:
 
 ```bash
-sudo bash archive-logs.sh /tmp/roboshop-logs /var/log/catalogue-archives 14
+sudo bash cleanup.sh /var/log/roboshop /var/log/roboshop-archives 14
 ```
+
+The script finds `.log` files older than 14 days, creates one timestamped
+`.tar.gz` archive, and deletes the source files only when compression succeeds.
 
 For daily cleanup at 02:00 in the server's timezone, add with `sudo crontab -e`
 after replacing `/opt/roboshop` with the actual Linux repository path:
 
 ```cron
-0 2 * * * /bin/bash /opt/roboshop/archive-logs.sh >> /var/log/roboshop-archive.log 2>&1
+0 2 * * * /bin/bash /opt/roboshop/cleanup.sh /var/log/roboshop /var/log/roboshop-archives 14 >> /var/log/roboshop-cleanup.log 2>&1
 ```
 
 Use Bash, not `sh`, for all scripts.
