@@ -60,7 +60,10 @@ unzip -o /tmp/frontend.zip &>>$logs_file
 
 validate $? "Extracting Frontend"
 
-cp /root/shell_script_roboshop/roboshop.conf /etc/nginx/default.d/roboshop.conf &>>$logs_file
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+cp "$SCRIPT_DIR/roboshop.conf" \
+   /etc/nginx/default.d/roboshop.conf &>>"$logs_file"
 
 validate $? "Copying Nginx Config"
 
