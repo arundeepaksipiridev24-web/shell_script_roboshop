@@ -1,50 +1,79 @@
 
-#!/bin/bash
+#!/bin/sh
 
-set -Eeuo pipefail
+set -eu
+
+# ==========================================
+# Domain Configuration
+# ==========================================
+DOMAIN_NAME="sodhichebutha.online"
+
+CART_HOST="cart.${DOMAIN_NAME}"
+USER_HOST="user.${DOMAIN_NAME}"
+AMQP_HOST="rabbitmq.${DOMAIN_NAME}"
 
 # ==========================================
 # Colors
 # ==========================================
-R="\e[31m"
-G="\e[32m"
-Y="\e[33m"
-B="\e[34m"
-N="\e[0m"
+R='\033[0;31m'
+G='\033[0;32m'
+Y='\033[0;33m'
+B='\033[0;34m'
+N='\033[0m'
 
 # ==========================================
 # Log Configuration
 # ==========================================
 LOG_DIR="/var/log/roboshop"
-LOG_FILE="$LOG_DIR/payment.log"
+LOG_FILE="${LOG_DIR}/payment.log"
+
+START_TIME=$(date +%s)
+START_DATE=$(date '+%F %T')
+
+# ==========================================
+# Root Check
+# ==========================================
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: Please run sudo sh payment.sh"
+    exit 1
+fi
 
 mkdir -p "$LOG_DIR"
-
-exec > >(tee -a "$LOG_FILE") 2>&1
-
-# ==========================================
-# Start Time
-# ==========================================
-START_TIME=$(date +%s)
-START_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+touch "$LOG_FILE"
 
 # ==========================================
 # Logging Functions
+# Screen = Colored messages
+# File   = Messages + command output
 # ==========================================
+log() {
+    LEVEL="$1"
+    COLOR="$2"
+    MESSAGE="$3"
+
+    TIME=$(date '+%F %T')
+
+    printf "${COLOR}%s [%s] %s${N}\n" \
+        "$TIME" "$LEVEL" "$MESSAGE"
+
+    printf "%s [%s] %s\n" \
+        "$TIME" "$LEVEL" "$MESSAGE" >> "$LOG_FILE"
+}
+
 INFO() {
-    echo -e "${B}[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] $1${N}"
+    log "INFO" "$B" "$1"
 }
 
 SUCCESS() {
-    echo -e "${G}[$(date '+%Y-%m-%d %H:%M:%S')] [SUCCESS] $1${N}"
+    log "SUCCESS" "$G" "$1"
 }
 
 WARNING() {
-    echo -e "${Y}[$(date '+%Y-%m-%d %H:%M:%S')] [WARNING] $1${N}"
+    log "WARNING" "$Y" "$1"
 }
 
 ERROR() {
-    echo -e "${R}[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] $1${N}"
+    log "ERROR" "$R" "$1"
 }
 
 # ==========================================
@@ -52,7 +81,7 @@ ERROR() {
 # ==========================================
 show_execution_time() {
     END_TIME=$(date +%s)
-    END_DATE=$(date '+%Y-%m-%d %H:%M:%S')
+    END_DATE=$(date '+%F %T')
 
     TOTAL_TIME=$((END_TIME - START_TIME))
 
@@ -69,197 +98,188 @@ show_execution_time() {
 # ==========================================
 # Error Handling
 # ==========================================
-on_error() {
-    local exit_code=$1
-    local line_number=$2
-
-    trap - ERR
-
-    ERROR "Payment installation failed at line $line_number"
-    ERROR "Exit Code: $exit_code"
-
-    show_execution_time
-    exit "$exit_code"
+fail() {
+    ERROR "$1"
+    ERROR "Check complete logs: $LOG_FILE"
+    exit 1
 }
 
-trap 'on_error "$?" "$LINENO"' ERR
+# Run command and save full output to log
+run_step() {
+    STEP_NAME="$1"
+    shift
+
+    INFO "$STEP_NAME"
+
+    if "$@" >> "$LOG_FILE" 2>&1; then
+        SUCCESS "$STEP_NAME completed"
+    else
+        STATUS=$?
+        ERROR "$STEP_NAME failed (exit code: $STATUS)"
+        exit "$STATUS"
+    fi
+}
+
+# Always show execution time on exit
+finish() {
+    STATUS=$?
+
+    trap - 0
+
+    if [ "$STATUS" -eq 0 ]; then
+        SUCCESS "Payment installation completed successfully"
+    else
+        ERROR "Payment installation failed"
+        ERROR "See: $LOG_FILE"
+    fi
+
+    show_execution_time
+}
+
+trap finish 0
 
 # ==========================================
-# Validate Arguments
+# Find Script Directory
 # ==========================================
-if [[ "$EUID" -ne 0 ]]; then
-    ERROR "Run this script using sudo"
-    exit 1
-fi
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
-DOMAIN_NAME="${1:-}"
-
-if [[ -z "$DOMAIN_NAME" ]]; then
-    ERROR "Domain name is missing"
-    INFO "Usage: sudo bash payment.sh sodhichebutha.online"
-    exit 1
-fi
-
-# Remove accidental trailing dot
-DOMAIN_NAME="${DOMAIN_NAME%.}"
-
-# ==========================================
-# Route 53 DNS Hostnames
-# ==========================================
-CART_HOST="cart.${DOMAIN_NAME}"
-USER_HOST="user.${DOMAIN_NAME}"
-AMQP_HOST="rabbitmq.${DOMAIN_NAME}"
-
-# Find service file relative to script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-SERVICE_SOURCE="$SCRIPT_DIR/payment.service"
+SERVICE_SOURCE="${SCRIPT_DIR}/payment.service"
 SERVICE_DEST="/etc/systemd/system/payment.service"
 
 INFO "=========================================="
 INFO "Starting Payment Service Installation"
 INFO "=========================================="
 
-INFO "Domain      : $DOMAIN_NAME"
-INFO "Cart Host   : $CART_HOST"
-INFO "User Host   : $USER_HOST"
-INFO "RabbitMQ    : $AMQP_HOST"
-INFO "Started At  : $START_DATE"
+INFO "Domain   : $DOMAIN_NAME"
+INFO "Cart     : $CART_HOST"
+INFO "User     : $USER_HOST"
+INFO "RabbitMQ : $AMQP_HOST"
 
 # ==========================================
 # Validate Service File
 # ==========================================
-INFO "Checking payment.service file"
+INFO "Checking payment.service"
 
-if [[ ! -f "$SERVICE_SOURCE" ]]; then
-    ERROR "payment.service not found at $SERVICE_SOURCE"
-    exit 1
+if [ ! -f "$SERVICE_SOURCE" ]; then
+    fail "File not found: $SERVICE_SOURCE"
 fi
 
-SUCCESS "payment.service file found"
+SUCCESS "payment.service found"
 
 # ==========================================
-# Install Dependencies
+# Install Python and Utilities
 # ==========================================
-INFO "Installing Python 3.14 and utilities"
-
-dnf install -y \
-    python3.14 \
-    python3.14-pip \
-    unzip \
-    curl
-
-SUCCESS "System dependencies installed"
+run_step "Installing Python 3.14 and utilities" \
+    dnf install -y python3.14 python3.14-pip unzip curl
 
 # ==========================================
-# Validate Route 53 DNS
+# Verify Python
+# ==========================================
+run_step "Checking Python version" \
+    python3.14 --version
+
+# ==========================================
+# Check Route 53 DNS
 # ==========================================
 INFO "Checking Route 53 DNS resolution"
 
 for HOST in "$CART_HOST" "$USER_HOST" "$AMQP_HOST"
 do
-    if getent ahostsv4 "$HOST" >/dev/null; then
+    if getent ahostsv4 "$HOST" >> "$LOG_FILE" 2>&1; then
         SUCCESS "DNS resolved: $HOST"
     else
-        WARNING "DNS not resolving: $HOST"
+        WARNING "DNS not resolved: $HOST"
     fi
 done
 
 # ==========================================
 # Create Application User
 # ==========================================
-INFO "Creating roboshop user"
+INFO "Checking roboshop user"
 
-if ! id roboshop &>/dev/null; then
-    useradd --system \
+if id roboshop >> "$LOG_FILE" 2>&1; then
+    SUCCESS "Roboshop user already exists"
+else
+    run_step "Creating roboshop user" \
+        useradd --system \
         --home /app \
         --shell /sbin/nologin \
         --comment "roboshop system user" \
         roboshop
 fi
 
-SUCCESS "Roboshop user ready"
-
 # ==========================================
-# Download Application
+# Download Payment Application
 # ==========================================
-INFO "Downloading Payment Application"
+run_step "Creating application directory" \
+    mkdir -p /app
 
-mkdir -p /app
-
-curl -fL \
+run_step "Downloading Payment application" \
+    curl -fL --retry 3 \
     -o /tmp/payment.zip \
     "https://raw.githubusercontent.com/daws-92s/roboshop-documentation/refs/heads/main/artifacts/payment-v4.zip"
 
-cd /app
-
-unzip -o /tmp/payment.zip
-
-SUCCESS "Payment application downloaded"
+run_step "Extracting Payment application" \
+    unzip -o /tmp/payment.zip -d /app
 
 # ==========================================
 # Python Virtual Environment
 # ==========================================
-INFO "Creating Python virtual environment"
-
-python3.14 -m venv /app/.venv
-
-SUCCESS "Virtual environment ready"
+run_step "Creating Python virtual environment" \
+    python3.14 -m venv /app/.venv
 
 # ==========================================
 # Install Python Dependencies
 # ==========================================
-INFO "Installing Payment dependencies"
-
-/app/.venv/bin/pip install -r /app/requirements.txt
-
-SUCCESS "Payment dependencies installed"
+run_step "Installing Python dependencies" \
+    /app/.venv/bin/pip install -r /app/requirements.txt
 
 # ==========================================
 # Configure Payment Service
 # ==========================================
-INFO "Copying payment.service"
+run_step "Copying payment.service" \
+    cp "$SERVICE_SOURCE" "$SERVICE_DEST"
 
-cp "$SERVICE_SOURCE" "$SERVICE_DEST"
+INFO "Updating Route 53 hostnames"
 
-INFO "Updating Route 53 DNS hostnames"
-
-sed -i \
+if sed -i \
     -e "s|<CART-SERVER-IPADDRESS>|${CART_HOST}|g" \
     -e "s|<USER-SERVER-IPADDRESS>|${USER_HOST}|g" \
     -e "s|<RABBITMQ-SERVER-IPADDRESS>|${AMQP_HOST}|g" \
-    "$SERVICE_DEST"
-
-# Ensure no placeholders remain
-if grep -q '<.*SERVER-IPADDRESS>' "$SERVICE_DEST"; then
-    ERROR "Unresolved placeholders found in payment.service"
-    exit 1
+    "$SERVICE_DEST" >> "$LOG_FILE" 2>&1; then
+    SUCCESS "Route 53 hostnames updated"
+else
+    fail "Failed to update payment.service"
 fi
 
-# Validate systemd service syntax
-systemd-analyze verify "$SERVICE_DEST"
+# Check unresolved placeholders
+if grep -q '<.*SERVER-IPADDRESS>' "$SERVICE_DEST"; then
+    fail "Unresolved placeholders in payment.service"
+fi
 
-SUCCESS "Payment service configured"
+# ==========================================
+# Validate SystemD Configuration
+# ==========================================
+run_step "Validating systemd service" \
+    systemd-analyze verify "$SERVICE_DEST"
 
 # ==========================================
 # Application Permissions
 # ==========================================
-INFO "Setting application permissions"
-
-chown -R roboshop:roboshop /app
-
-SUCCESS "Application permissions updated"
+run_step "Setting application permissions" \
+    chown -R roboshop:roboshop /app
 
 # ==========================================
 # Start Payment Service
 # ==========================================
-INFO "Starting Payment Service"
+run_step "Reloading systemd" \
+    systemctl daemon-reload
 
-systemctl daemon-reload
-systemctl enable payment
-systemctl restart payment
+run_step "Enabling Payment service" \
+    systemctl enable payment
 
-SUCCESS "Systemd startup command completed"
+run_step "Restarting Payment service" \
+    systemctl restart payment
 
 # ==========================================
 # Verify Service Status
@@ -269,44 +289,45 @@ INFO "Checking Payment service status"
 if systemctl is-active --quiet payment; then
     SUCCESS "Payment service is running"
 else
-    ERROR "Payment service failed"
-    journalctl -u payment -n 30 --no-pager
-    exit 1
+    journalctl -u payment -n 50 --no-pager \
+        >> "$LOG_FILE" 2>&1
+
+    fail "Payment service is not running"
 fi
 
 # ==========================================
-# Health Check
+# Payment Health Check
 # ==========================================
 INFO "Checking Payment health API"
 
-HEALTH_OK=false
+HEALTH_OK=0
 
-for attempt in {1..5}
+attempt=1
+
+while [ "$attempt" -le 5 ]
 do
     if curl -fsS --max-time 10 \
-        http://localhost:8080/health; then
-        echo
+        http://localhost:8080/health \
+        >> "$LOG_FILE" 2>&1; then
+
         SUCCESS "Payment health API responded"
-        HEALTH_OK=true
+        HEALTH_OK=1
         break
     fi
 
     WARNING "Health check attempt $attempt failed"
+
+    attempt=$((attempt + 1))
     sleep 3
 done
 
-if [[ "$HEALTH_OK" != "true" ]]; then
-    ERROR "Payment health API failed"
-    journalctl -u payment -n 30 --no-pager
-    exit 1
+if [ "$HEALTH_OK" -ne 1 ]; then
+    journalctl -u payment -n 50 --no-pager \
+        >> "$LOG_FILE" 2>&1
+
+    fail "Payment health check failed"
 fi
 
-# ==========================================
-# Completed
-# ==========================================
-echo
-SUCCESS "=========================================="
-SUCCESS "Payment Installation Completed"
-SUCCESS "=========================================="
-
-show_execution_time
+INFO "=========================================="
+SUCCESS "All Payment setup steps completed"
+INFO "=========================================="
