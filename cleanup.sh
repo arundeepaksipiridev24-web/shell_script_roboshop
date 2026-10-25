@@ -23,7 +23,10 @@ if [ ! -d "$DEST_DIR" ]; then
 fi
 
 FILE_LIST=$(mktemp)
-find "$SOURCE_DIR" -type f -name '*.log' -mmin +$((DAYS * 24 * 60)) -print0 > "$FILE_LIST"
+
+# Store paths relative to SOURCE_DIR inside the archive.
+(cd "$SOURCE_DIR" && find . -type f -name '*.log' \
+    -mmin +$((DAYS * 24 * 60)) -print0) > "$FILE_LIST"
 
 if [ ! -s "$FILE_LIST" ]; then
     echo "No .log files found older than $DAYS days in $SOURCE_DIR"
@@ -33,8 +36,8 @@ fi
 
 ARCHIVE_FILE="$DEST_DIR/logs-$(date +%Y-%m-%d-%H-%M-%S).tar.gz"
 
-if tar --null -czf "$ARCHIVE_FILE" --files-from="$FILE_LIST"; then
-    xargs -0 rm -f < "$FILE_LIST"
+if tar -C "$SOURCE_DIR" --null -czf "$ARCHIVE_FILE" --files-from="$FILE_LIST"; then
+    (cd "$SOURCE_DIR" && xargs -0 rm -f < "$FILE_LIST")
     echo "Archive created: $ARCHIVE_FILE"
     echo "Old log files deleted from: $SOURCE_DIR"
 else
